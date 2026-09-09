@@ -1,15 +1,22 @@
 from faster_whisper import WhisperModel
-from silero_vad import load_silero_vad
-import torch
 
 import sounddevice as sd
 import soundfile as sf
 
 import numpy as np
 import sys
+from evdev import InputDevice, ecodes
 
 from openai import OpenAI
 from dotenv import load_dotenv
+
+import subprocess
+import atexit
+
+from database import ConversationDatabase
+
+subprocess.run(['stty', '-echo'])
+atexit.register(lambda: subprocess.run(['stty', 'echo']))
 
 load_dotenv()
 
@@ -19,21 +26,10 @@ BLOCK_SIZE = 512
 audio_buffer = []
 recorded_chunks = []
 
-model = load_silero_vad()
-
-def is_speech(audio_data: np.ndarray, sample_rate=SAMPLE_RATE, threshold=0.5) -> bool:
-    audio_tensor = torch.from_numpy(audio_data)
-    speech_prob = model(audio_tensor, sample_rate).item()
-    return speech_prob > threshold
-
 def callback(indata, frames, time_info, status):
     audio_chunk = indata[:,0]
-    if is_speech(audio_chunk):
-        print("Speech detected")
-        audio_buffer.append(audio_chunk.copy())
-    else:
-        audio_buffer.append(audio_chunk.copy())
-        print("Silence detected")
+    audio_buffer.append(audio_chunk.copy())
+
 
 assistant_speaking = False
 
@@ -42,24 +38,36 @@ def transcribe_speech(audio_data):
     global assistant_speaking
 
     if not assistant_speaking:
-        segments, info = whisper_model.transcribe(audio_data, language="de")
+        segments, _ = whisper_model.transcribe(audio_data, language="de")
         transcribed_text = " ".join(segment.text for segment in segments)
-        print("Transkript: ", transcribed_text)
+        print("\nTranskript: ", transcribed_text)
         return transcribed_text
 
 client = OpenAI()
+db = ConversationDatabase()
+conversation_history = db.load_history()
 
 def get_response(user_speech):
     if not user_speech:
         return
+
+    conversation_history.append({"role": "user", "content": user_speech})
+    db.add_message("user", user_speech)
+
+    print("Denkt nach...\n")
+    
     assistant_response = client.responses.create(
-        model="gpt-5.6-luna",
-        input=user_speech
+        model="gpt-5.6-sol",
+        input=conversation_history,
     )
 
+    conversation_history.append({"role": "assistant", "content": assistant_response.output_text})
+    db.add_message("assistant", assistant_response.output_text)
     return assistant_response.output_text
 
 def stream_response_to_file(assistant_response, file_path):
+    print("Verarbeitet...")
+
     with client.audio.speech.with_streaming_response.create(
         model="gpt-4o-mini-tts",
         input=assistant_response,
@@ -78,18 +86,43 @@ def play_response(file_path: str):
     assistant_speaking = False
 
 if __name__ == "__main__":
+
+    keyboard = InputDevice("/dev/input/event3")
+    key_pressed = False
+
+    stream = sd.InputStream(
+        samplerate=SAMPLE_RATE,
+        blocksize=BLOCK_SIZE,
+        channels=1,
+        dtype="float32",
+        callback=callback
+    )
+
     try:
-        with sd.InputStream(samplerate=SAMPLE_RATE, blocksize=BLOCK_SIZE, channels=1, dtype="float32", callback=callback):
-            while True:
-                sd.sleep(100)
-            
+        for event in keyboard.read_loop():
+            if event.type == ecodes.EV_KEY and event.code == ecodes.KEY_A:
+                if event.value == 2 and not key_pressed:
+                    key_pressed = True
+                    if key_pressed:
+                        print("Rede...")
+                        stream.start()
+                elif event.value == 0:
+                    if key_pressed:
+                        key_pressed = False
+                        stream.stop()
+                        stream.close()
+                        print("Aufnahme beendet")
+
+        
     except KeyboardInterrupt:
         recorded_chunks = np.concatenate(audio_buffer)
         sd.play(recorded_chunks, samplerate=SAMPLE_RATE)
         sd.wait()
+
         text = transcribe_speech(recorded_chunks)
         response = get_response(text)
         stream_response_to_file(response, "response.wav")
+        print("Antwort: ", response)
         play_response("response.wav")
 
         sys.exit(0)
