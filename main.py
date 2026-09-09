@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 import subprocess
 import atexit
+import re
 
 from database import ConversationDatabase
 
@@ -33,14 +34,14 @@ def callback(indata, frames, time_info, status):
 
 assistant_speaking = False
 
-whisper_model = WhisperModel("small", "cpu", compute_type="int8")
+whisper_model = WhisperModel("base", "cpu", compute_type="int8")
 def transcribe_speech(audio_data):
     global assistant_speaking
 
     if not assistant_speaking:
         segments, _ = whisper_model.transcribe(audio_data, language="de")
         transcribed_text = " ".join(segment.text for segment in segments)
-        print("\nTranskript: ", transcribed_text)
+        # print("\nTranskript: ", transcribed_text)
         return transcribed_text
 
 client = OpenAI()
@@ -52,7 +53,7 @@ def get_response(user_speech):
         return
 
     conversation_history.append({"role": "user", "content": user_speech})
-    db.add_message("user", user_speech)
+    db.add_message("user", user_speech) 
 
     print("Denkt nach...\n")
     
@@ -85,6 +86,11 @@ def play_response(file_path: str):
     sd.wait()
     assistant_speaking = False
 
+def clean_text(text):
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)
+    return text
+
 if __name__ == "__main__":
 
     keyboard = InputDevice("/dev/input/event3")
@@ -104,25 +110,29 @@ if __name__ == "__main__":
                 if event.value == 2 and not key_pressed:
                     key_pressed = True
                     if key_pressed:
-                        print("Rede...")
+                        print("\nRede...\n")
                         stream.start()
                 elif event.value == 0:
                     if key_pressed:
                         key_pressed = False
+
                         stream.stop()
-                        stream.close()
-                        print("Aufnahme beendet")
+                        print("Aufnahme beendet\n")
 
-        
+                        recorded_chunks = np.concatenate(audio_buffer)
+                        audio_buffer.clear()
+                        #sd.play(recorded_chunks, samplerate=SAMPLE_RATE)
+                        #sd.wait()
+                
+                        text = transcribe_speech(recorded_chunks)
+                        response = get_response(text)
+                        stream_response_to_file(response, "response.wav")
+                        print("Antwort: ", response)
+                        play_response("response.wav")
+                        if "okay das war alles" in clean_text(text):
+                            stream.stop()
+                            stream.close()
+                            sys.exit(0)
+
     except KeyboardInterrupt:
-        recorded_chunks = np.concatenate(audio_buffer)
-        sd.play(recorded_chunks, samplerate=SAMPLE_RATE)
-        sd.wait()
-
-        text = transcribe_speech(recorded_chunks)
-        response = get_response(text)
-        stream_response_to_file(response, "response.wav")
-        print("Antwort: ", response)
-        play_response("response.wav")
-
         sys.exit(0)
