@@ -8,10 +8,12 @@ import sys
 from evdev import InputDevice, ecodes
 
 from openai import OpenAI
+from tools import tools, FUNCTIONS
 from dotenv import load_dotenv
 
 import subprocess
 import atexit
+import json
 import re
 
 from database import ConversationDatabase
@@ -46,6 +48,8 @@ def transcribe_speech(audio_data):
 
 client = OpenAI()
 db = ConversationDatabase()
+
+
 conversation_history = db.load_history()
 
 def get_response(user_speech):
@@ -60,11 +64,41 @@ def get_response(user_speech):
     assistant_response = client.responses.create(
         model="gpt-5.6-sol",
         input=conversation_history,
+        tools=tools
     )
 
-    conversation_history.append({"role": "assistant", "content": assistant_response.output_text})
-    db.add_message("assistant", assistant_response.output_text)
-    return assistant_response.output_text
+    conversation_history.extend(assistant_response.output)
+
+    tool_outputs = []
+
+    for item in assistant_response.output:
+        if item.type == "function_call":
+            function = FUNCTIONS.get(item.name)
+            if function:
+                result = function()
+
+                tool_outputs.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": item.call_id,
+                        "output": str(result)
+                    }
+                )
+
+    if tool_outputs:
+        conversation_history.extend(tool_outputs)
+
+        assistant_response = client.responses.create(
+            model="gpt-5.6-sol",
+            input=conversation_history,
+            tools=tools
+        )
+
+    assistant_text = assistant_response.output_text
+
+    conversation_history.append({"role": "assistant", "content": assistant_text})
+    db.add_message("assistant", assistant_text)
+    return assistant_text
 
 def stream_response_to_file(assistant_response, file_path):
     print("Verarbeitet...")
