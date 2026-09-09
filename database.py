@@ -1,6 +1,7 @@
 import sqlite3
 from pathlib import Path
 from datetime import datetime
+import json
 
 
 class ConversationDatabase:
@@ -37,4 +38,4 @@ class ConversationDatabase:
 if __name__ == "__main__":
     db = ConversationDatabase()
     history = db.load_history()
-    print(history)
+    print(json.dumps(history, indent=2, ensure_ascii=False))
