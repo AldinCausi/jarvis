@@ -1,6 +1,8 @@
-debug_audio.wav
+messages.db
 .env
-.vscode
+__pycache__/
+*.pyc
+.venv/
 response.wav
-.git
+.vscode
 
