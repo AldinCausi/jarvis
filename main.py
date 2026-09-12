@@ -8,7 +8,8 @@ import sys
 from evdev import InputDevice, ecodes
 
 from openai import OpenAI
-from tools import tools, FUNCTIONS
+import tools
+from tools import TOOLS, FUNCTIONS
 from dotenv import load_dotenv
 
 import subprocess
@@ -43,7 +44,7 @@ def transcribe_speech(audio_data):
     if not assistant_speaking:
         segments, _ = whisper_model.transcribe(audio_data, language="de")
         transcribed_text = " ".join(segment.text for segment in segments)
-        # print("\nTranskript: ", transcribed_text)
+        print("\nTranskript: ", transcribed_text)
         return transcribed_text
 
 client = OpenAI()
@@ -57,26 +58,35 @@ def get_response(user_speech):
         return
 
     conversation_history.append({"role": "user", "content": user_speech})
-    db.add_message("user", user_speech) 
+    db.add_message("user", user_speech)
 
     print("Denkt nach...\n")
-    
-    assistant_response = client.responses.create(
-        model="gpt-5.6-sol",
-        input=conversation_history,
-        tools=tools
-    )
+    while True:
 
-    conversation_history.extend(assistant_response.output)
+        assistant_response = client.responses.create(
+            model="gpt-5.6-luna",
+            input=conversation_history,
+            tools=TOOLS
+        )
 
-    tool_outputs = []
+        # print(assistant_response.output)
 
-    for item in assistant_response.output:
-        if item.type == "function_call":
+        conversation_history.extend(assistant_response.output)
+
+        function_calls = [
+            item for item in assistant_response.output
+            if item.type == "function_call"
+        ]
+
+        if not function_calls:
+            break
+
+        tool_outputs = []
+        for item in function_calls:
             function = FUNCTIONS.get(item.name)
+            args = json.loads(item.arguments)
             if function:
-                result = function()
-
+                result = function(**args)
                 tool_outputs.append(
                     {
                         "type": "function_call_output",
@@ -85,14 +95,7 @@ def get_response(user_speech):
                     }
                 )
 
-    if tool_outputs:
         conversation_history.extend(tool_outputs)
-
-        assistant_response = client.responses.create(
-            model="gpt-5.6-sol",
-            input=conversation_history,
-            tools=tools
-        )
 
     assistant_text = assistant_response.output_text
 
@@ -106,7 +109,7 @@ def stream_response_to_file(assistant_response, file_path):
     with client.audio.speech.with_streaming_response.create(
         model="gpt-4o-mini-tts",
         input=assistant_response,
-        voice="marin"
+        voice="coral"
     ) as response:
         response.stream_to_file(file_path)
         return response
@@ -119,11 +122,6 @@ def play_response(file_path: str):
     sd.play(data, samplerate)
     sd.wait()
     assistant_speaking = False
-
-def clean_text(text):
-    text = text.lower()
-    text = re.sub(r'[^\w\s]', '', text)
-    return text
 
 if __name__ == "__main__":
 
@@ -157,15 +155,13 @@ if __name__ == "__main__":
                         audio_buffer.clear()
                         #sd.play(recorded_chunks, samplerate=SAMPLE_RATE)
                         #sd.wait()
-                
+
                         text = transcribe_speech(recorded_chunks)
                         response = get_response(text)
                         stream_response_to_file(response, "response.wav")
                         print("Antwort: ", response)
                         play_response("response.wav")
-                        if "okay das war alles" in clean_text(text):
-                            stream.stop()
-                            stream.close()
+                        if tools.stop_program_flag:
                             sys.exit(0)
 
     except KeyboardInterrupt:
