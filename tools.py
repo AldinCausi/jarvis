@@ -32,7 +32,7 @@ TOOLS = [
         "parameters": {
             "type": "object",
             "properties": {},
-            "requiered": []
+            "required": []
         },
     },
     {
