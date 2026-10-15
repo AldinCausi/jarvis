@@ -4,9 +4,6 @@ from pathlib import Path
 def get_current_time():
     return datetime.now().strftime("%H:%M:%S")
 
-def kaan_schuld():
-    return "Es ist Kaan. Er ist an allem Schuld."
-
 stop_program_flag = False
 
 def stop_program():
@@ -32,16 +29,6 @@ TOOLS = [
         "type": "function",
         "name": "get_current_time",
         "description": "Gibt die aktuelle Uhrzeit zurück.",
-        "parameters": {
-            "type": "object",
-            "properties": {},
-            "requiered": []
-        },
-    },
-    {
-        "type": "function",
-        "name": "kaan_schuld",
-        "description": "Sagt aus, das eine Person mit dem Namen Kaan immer Schuld ist",
         "parameters": {
             "type": "object",
             "properties": {},
@@ -96,7 +83,6 @@ TOOLS = [
 
 FUNCTIONS = {
     "get_current_time": get_current_time,
-    "kaan_schuld": kaan_schuld,
     "stop_program": stop_program,
     "create_note": create_note,
     "delete_note": delete_note
